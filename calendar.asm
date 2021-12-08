@@ -131,36 +131,36 @@ main PROC
 
     call draw_border
 
-    draw_char_at_m 'S', 3, 30
-    draw_char_at_m 'u', 3, 31
+    draw_char_at_m 'S', 3, 27
+    draw_char_at_m 'u', 3, 28
     
-    draw_char_at_m 'M', 3, 33
-    draw_char_at_m 'o', 3, 34
+    draw_char_at_m 'M', 3, 31
+    draw_char_at_m 'o', 3, 32
 
-    draw_char_at_m 'T', 3, 36
-    draw_char_at_m 'u', 3, 37
+    draw_char_at_m 'T', 3, 35
+    draw_char_at_m 'u', 3, 36
 
     draw_char_at_m 'W', 3, 39
     draw_char_at_m 'e', 3, 40
     
-    draw_char_at_m 'T', 3, 42
-    draw_char_at_m 'h', 3, 43
+    draw_char_at_m 'T', 3, 43
+    draw_char_at_m 'h', 3, 44
     
-    draw_char_at_m 'F', 3, 45
-    draw_char_at_m 'r', 3, 46
+    draw_char_at_m 'F', 3, 47
+    draw_char_at_m 'r', 3, 48
     
-    draw_char_at_m 'S', 3, 48
-    draw_char_at_m 'a', 3, 49
+    draw_char_at_m 'S', 3, 51
+    draw_char_at_m 'a', 3, 52
 
     mov dh, 5
-    mov dl, 30
+    mov dl, 27
 
     mov cx, 42
 days_loop:
-    cmp dl, 51
+    cmp dl, 55
     jne no_adjust
     add dh, 2
-    mov dl, 30
+    mov dl, 27
 no_adjust:
     push ax
     draw_char_at_dx_m '_'
@@ -169,13 +169,12 @@ no_adjust:
     push ax
     draw_char_at_dx_m '_'
     pop ax
-    add dl, 2
+    add dl, 3
     loop days_loop
 
 main_loop:
     mov ah, 00h ; Get keycode
     int 16h     ; Bios interrupt
-
 
     cmp al, 'q'
     jz  done    ; If the key pressed was q, quit the program
