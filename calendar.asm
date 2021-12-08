@@ -26,6 +26,23 @@ draw_char_at_dx_m MACRO char
 ENDM
 
 .DATA
+jan_name_v db "January","$"
+feb_name_v db "Febuary","$"
+mar_name_v db "March","$"
+apr_name_v db "April","$"
+may_name_v db "May","$"
+jun_name_v db "June","$"
+jul_name_v db "July","$"
+aug_name_v db "August","$"
+sep_name_v db "September","$"
+oct_name_v db "October","$"
+nov_name_v db "November","$"
+dec_name_v db "December","$"
+
+month_lens_v db 31,28,31,30,31,30,31,31,30,31,30,31
+month_name_ptrs_v dw offset jan_name_v, offset feb_name_v, offset mar_name_v, offset apr_name_v, offset may_name_v, offset jun_name_v, offset jul_name_v, offset aug_name_v, offset sep_name_v, offset oct_name_v, offset nov_name_v, offset dec_name_v
+curr_mon_v db 0
+curr_yer_v dw 0
 
 .CODE
 ORG 100h
@@ -116,6 +133,9 @@ bottom_loop:
 ENDP draw_border
 
 main PROC
+    mov ah, 2Ah
+    int 21h
+
     mov ax, 0B800h
     mov es, ax;      store vram segment in es
 
@@ -177,14 +197,14 @@ main_loop:
     int 16h     ; Bios interrupt
 
     cmp al, 'q'
-    jz  done    ; If the key pressed was q, quit the program
+    jz  exit    ; If the key pressed was q, quit the program
 
     cmp al, 'Q'
-    jz  done    ; If the key pressed was Q, quit the program
+    jz  exit    ; If the key pressed was Q, quit the program
 
     jmp main_loop
 
-done:
+exit:
     mov ax, 07h ; Change back to white text on black background
     push ax
     call clear_screen
