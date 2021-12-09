@@ -46,6 +46,7 @@ draw_char_at_dx_m MACRO char
 ENDM
 
 .DATA
+; Month Names
 jan_name_v db "January",0
 feb_name_v db "Febuary",0
 mar_name_v db "March",0
@@ -58,11 +59,15 @@ sep_name_v db "September",0
 oct_name_v db "October",0
 nov_name_v db "November",0
 dec_name_v db "December",0
+; Array of month name pointers
 month_name_ptrs_v dw offset jan_name_v, offset feb_name_v, offset mar_name_v, offset apr_name_v, offset may_name_v, offset jun_name_v, offset jul_name_v, offset aug_name_v, offset sep_name_v, offset oct_name_v, offset nov_name_v, offset dec_name_v
 
+; Number of days in each month
 month_lens_v db 31,28,31,30,31,30,31,31,30,31,30,31
 
+; Current Month
 curr_mon_v db ?
+; Current Year
 curr_yer_v dw ?
 
 .CODE
@@ -130,6 +135,23 @@ draw_row_col PROC
     pop ax                   ; Restore ax to previous value
     ret
 ENDP draw_row_col
+
+print_string PROC
+    ; TODO(Adin): Clean up
+    mov si, [month_name_ptrs_v + 4]
+    xor di, di
+print_string_loop:
+    mov al, byte ptr [si]
+    cmp al, 0h
+    jz print_string_done
+    mov es:[di], al
+    inc si
+    add di, 2
+    jmp print_string_loop
+    
+print_string_done:
+    ret
+ENDP print_string
 
 draw_border PROC
     xor di, di              ; 0 vram index
@@ -224,6 +246,8 @@ no_adjust:
     pop ax
     add dl, 3
     loop days_loop
+
+    call print_string
 
     ;mov si, ds:[month_name_ptrs_v + 2]
     ;call print_string
