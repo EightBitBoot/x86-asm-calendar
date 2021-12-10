@@ -9,6 +9,28 @@ insert_char_m MACRO char, color
     inc di
 ENDM
 
+; Push all registers to the stack when entering a procedure
+pusha_m MACRO
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+ENDM
+
+; Restore all registers from the stack when exiting a procedure
+popa_m MACRO
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+ENDM
+
+ALL_REGS_OFF=12
+
 draw_char_at_m MACRO char, row, col
     push si        ; Save si to restore later
     push dx        ; Save dx to restore later
@@ -43,6 +65,20 @@ draw_char_at_dx_m MACRO char
     call draw_row_col
 
     add sp, 8      ; Drop the three values pushed to the stack: old si, old dx, coordinates, character
+ENDM
+
+; Destroys values in ax, bx, and cl
+calculate_vram_offset_m MACRO
+    mov al, dh               ; Load row into al
+    mov cl, 160              ; Load row length into cl
+    mul cl                   ; Multiply the row by the row length
+    mov bx, ax               ; Move the adjusted row offset to bx
+
+    xor ax, ax               ; Clear ax in preperation to calculate the column offset
+    mov al, dl               ; Load column into al
+    mov cl, 2                ; Load character size into cl
+    mul cl                   ; Multiply the column by 2 (2 bytes per character)
+    add bx, ax               ; Combine the total offset into bx
 ENDM
 
 .DATA
@@ -84,7 +120,7 @@ clear_screen PROC
 
     mov cx, 80*25
 clear_loop:
-    insert_char_m 20h, al
+    insert_char_m 00h, al
     loop clear_loop
 
     pop ax     ; Restore ax
@@ -106,52 +142,83 @@ ENDP clear_screen
 ;                 low byte of the word below the character on stack
 ;
 draw_row_col PROC
-    push ax                  ; Store ax to restore later
-    push bx                  ; Store bx to restore later
-    push cx                  ; Store cx to restore later
-    push dx                  ; Store ds to restore later
-    push si                  ; Store si to restore later
+    pusha_m                     ; Save registers to restore later
 
-    mov si, sp               ; Load sp into si so it can be used as an offset
-    mov dx, [si+10+4]        ; Load coordinates into dx (dh row) (dl col)
-    mov al, dh               ; Load row into al
-    mov cl, 160              ; Load row length into cl
-    mul cl                   ; Multiply the row by the row length
-    mov bx, ax               ; Move the adjusted row offset to bx
+    mov si, sp                  ; Load sp into si so it can be used as an offset
+    mov dx, [si+ALL_REGS_OFF+4] ; Load coordinates into dx (dh row) (dl col)
 
-    xor ax, ax               ; Clear ax in preperation to calculate the column offset
-    mov al, dl               ; Load column into al
-    mov cl, 2                ; Load character size into cl
-    mul cl                   ; Multiply the column by 2 (2 bytes per character)
-    add bx, ax               ; Combine the total offset into bx
+    calculate_vram_offset_m     ; Calculate the offset in vram from coordinates: offset is stored in bx
 
-    mov ax, [si+10+2]        ; Load the character to print into ax
-    mov byte ptr es:[bx], al ; Move the character to the proper offset in vram
+    mov ax, [si+12+2]           ; Load the character to print into ax
+    mov byte ptr es:[bx], al    ; Move the character to the proper offset in vram
 
-    pop si                   ; Restore si to previous value
-    pop dx                   ; Restore dx to previous value
-    pop cx                   ; Restore cx to previous value
-    pop bx                   ; Restore bx to previous value
-    pop ax                   ; Restore ax to previous value
+    popa_m                      ; Restore registers to previous values
     ret
 ENDP draw_row_col
 
 print_string PROC
-    ; TODO(Adin): Clean up
-    mov si, [month_name_ptrs_v + 4]
-    xor di, di
+    pusha_m                     ; Store registers to restore later
+
+    mov bx, sp                  ; Use bx as stack offset
+    mov si, [bx+ALL_REGS_OFF+2] ; Load string pointer into si
+    mov dx, [bx+ALL_REGS_OFF+4] ; Load coordinates into dx
+
+    calculate_vram_offset_m     ; Calculate the vram offset from coordinates and store in bx
+    mov di, bx                  ; Move the vram offset to di
+
 print_string_loop:
-    mov al, byte ptr [si]
-    cmp al, 0h
-    jz print_string_done
-    mov es:[di], al
-    inc si
-    add di, 2
-    jmp print_string_loop
+    lodsb                       ; Load current char from source string
+    cmp al, 0h                  ; Check for null terminator
+    jz print_string_done        ; Break if null terminator
+    stosb                       ; Move the current char to vram
+    inc di                      ; Skip over the format byte in vram
+    jmp print_string_loop       ; Loop until done
     
 print_string_done:
+    popa_m                      ; Restore registers to previous values
+
     ret
 ENDP print_string
+
+print_year PROC
+    pusha_m                     ; Store registers to restore later
+
+    mov si, sp                  ; Move sp to si so it can be used as an offset
+    mov dx, [si+ALL_REGS_OFF+4] ; Load the coordinates into dx
+    calculate_vram_offset_m     ; Calculate the absolute vram offset specified by the coordinates
+    mov di, bx                  ; Move the vram offset to di
+
+    mov ax, [si+ALL_REGS_OFF+2] ; Load the year into ax
+    mov bx, 1000                ; Move 1000 into bx to prepare for the upcoming division
+    xor dx, dx                  ; Clear dx for the division (dividing by a word dvides DX:AX / r16)
+    div bx                      ; Divide by 1000 to find the thousands place
+    add ax, 30h                 ; Add 30h to the thousands place to get the ascii representation
+    stosb                       ; Move the ascii thousands place to vram
+    inc di                      ; Increment di to skip the format byte in vram
+    
+    mov ax, dx                  ; Move the remainder from the last division into ax (the year without the thousands place)
+    mov bx, 100                 ; Move 100 into bx to prepare for the upcoming division
+    xor dx, dx                  ; Clear dx for the division (dividing by a word dvides DX:AX / r16)
+    div bx                      ; Divide by 100 to find the hundreds place
+    add ax, 30h                 ; Add 30h to the hundreds place to get the ascii representation
+    stosb                       ; Move the ascii hundreds place to vram
+    inc di                      ; Increment di to skip the format byte in vram
+
+    mov ax, dx                  ; Move the remainder from the last division into ax (the year without the thousands or hundreds place)
+    mov bx, 10                  ; Move 10 into bx to prepare for the upcoming division
+    xor dx, dx                  ; Clear dx for the division (dividing by a word dvides DX:AX / r16)
+    div bx                      ; Divide by 10 to find the tens place
+    add ax, 30h                 ; Add 30h to the tens place to get the ascii representation
+    stosb                       ; Move the ascii tens place to vram
+    inc di                      ; Increment di to skip the format byte in vram
+
+    mov ax, dx                  ; Move the remainder from the last division into ax (ones place of the year)
+    add ax, 30h                 ; Add 30h to the ones place to get the ascii representation
+    stosb                       ; Move the ascii ones place to vram
+
+    popa_m                      ; Restore registers to previous values
+    ret
+ENDP print_year
 
 draw_border PROC
     xor di, di              ; 0 vram index
@@ -187,25 +254,11 @@ bottom_loop:
     ret
 ENDP draw_border
 
-main PROC
-    mov ah, 2Ah
-    int 21h
-
-    mov ax, 0B800h
-    mov es, ax;      store vram segment in es
-
-    mov ah, 01h   ; Set text-mode cursor shape
-    mov cx, 2607h ; bit 5 of ch indicates invisible cursor, cursor from scanline 6 to 7
-    int 10h       ; Bios interrupt
-
-    ; Draw the background elements
-    mov ax, 70h
-    push ax
-    call clear_screen
-    add sp, 2
-
+draw_static_elements PROC
+    ; Draw the border
     call draw_border
 
+    ; Draw the days of the week labels at their respective places
     draw_char_at_m 'S', 3, 27
     draw_char_at_m 'u', 3, 28
     
@@ -227,9 +280,16 @@ main PROC
     draw_char_at_m 'S', 3, 51
     draw_char_at_m 'a', 3, 52
 
+    ret
+ENDP
+
+draw_dynamic_elements PROC
+    pusha_m        ; Store all registers to restore later
+
+    ; Draw the days
+    ; TODO(Adin): Document
     mov dh, 5
     mov dl, 27
-
     mov cx, 42
 days_loop:
     cmp dl, 55
@@ -247,16 +307,97 @@ no_adjust:
     add dl, 3
     loop days_loop
 
-    call print_string
+    ; Clear the on-screen month
+    mov di, 176h         ; Load the absolute offset of the month label in vram
+    mov al, 0            ; Move an empty char into al
 
-    ;mov si, ds:[month_name_ptrs_v + 2]
-    ;call print_string
-    ;add sp, 2
+    mov cx, 9            ; Move 9 into cx as this is the maximum length of any month string
+clear_mon_loop:
+    stosb                ; Clear the current character in vram
+    inc di               ; Increment di to skip the format byte
+    loop clear_mon_loop  ; Loop back to clear_mon_loop
+     
+    ; Draw the current Month
+    mov dh, 2                        ; Move the starting row into dh
+    mov dl, 27                       ; Move the starting column into dl
+    push dx                          ; Push the coordinates to the stack
+    mov al, [curr_mon_v]             ; Load the current month index
+    mov cl, 2                        ; Load 2 into cl
+    mul cl                           ; Multiply by 2 to allign with word length pointers
+    mov bx, ax                       ; Move month * 2 into bx so it can be as an offset
+    mov dx, [month_name_ptrs_v + bx] ; Get the pointer to the current month's name from the name pointer array
+    push dx                          ; Push the month name pointer to the stack
+    call print_string                ; Print the string
+    add sp, 4                        ; Discard the two parameters passed on the stack
+
+    ; Draw the current year
+    mov dh, 2                        ; Move the starting row into dh
+    mov dl, 39                       ; Move the starting column into dl
+    push dx                          ; Push the coordinates to the stack
+    mov dx, [curr_yer_v]             ; Load the current year into dx
+    push dx                          ; Push the current year to the stack
+    call print_year                  ; Print the current year on screen
+    add sp, 4                        ; Drop the 2 variables passed on the stack
+    
+    popa_m         ; Restore all registers to previous values
+    ret
+ENDP
+
+main PROC
+    mov ax, 0B800h
+    mov es, ax           ; Store vram segment in es
+
+    mov ah, 01h          ; Set text-mode cursor shape
+    mov cx, 2607h        ; bit 5 of ch indicates invisible cursor, cursor from scanline 6 to 7
+    int 10h              ; Bios interrupt
+
+    mov ah, 2Ah          ; Get date
+    int 21h              ; Dos interrupt
+    sub dh, 1            ; Change the month to be 0 indexed
+    mov [curr_mon_v], dh ; Store the current month in its corresponding variable
+    mov [curr_yer_v], cx ; Store the current year in its corresponding variable
+
+    ; Draw the background elements
+    mov ax, 70h
+    push ax
+    call clear_screen
+    add sp, 2
+
+    call draw_static_elements  ; Draw all unchanging elements to the screen
+    call draw_dynamic_elements ; Draw the initial month to the screen
 
 main_loop:
     mov ah, 00h ; Get keycode
     int 16h     ; Bios interrupt
 
+    ; 4b left
+    cmp ah, 4Bh            ; Check if the current key code is a left arrow press
+    jne not_left           ; If the keycode isn't left arrow keep checking
+    dec [curr_mon_v]       ; Left current month
+    cmp [curr_mon_v], 0FFh ; Check for month underflow
+    jne update_screen      ; If no underflow, just update the screen
+    inc [curr_mon_v]       ; If underflowed, change month back to january
+    cmp [curr_yer_v], 1980 ; Check if underflowed and current year is min year
+    jz update_screen       ; If underflowed and current year is min year, just update the screen
+    dec [curr_yer_v]       ; If underflowed and current year isn't min year, decrement the year
+    mov [curr_mon_v], 11   ; If underflowed and current year isn't min year, reset the month to december
+    jmp update_screen      ; Update the screen after updating year and month
+
+not_left:
+    cmp ah, 4Dh            ; Check if the current key code is a right arrow press
+    jne not_right          ; If the keycode isn't right arrow keep checking
+    inc [curr_mon_v]       ; Increment current month
+    cmp [curr_mon_v], 12   ; Check for month overflow
+    jne update_screen      ; If no overflow, just update the screen
+    dec [curr_mon_v]       ; If overflowed, change month back to december
+    cmp [curr_yer_v], 2099 ; Check if overflowed and current year is max year
+    jz update_screen       ; If overflowed and current year is max year, just update the screen
+    inc [curr_yer_v]       ; If overflowed and current year isn't max year, increment the year
+    mov [curr_mon_v], 0    ; If overflowed and current year isn't max year, reset the month to january
+    jmp update_screen      ; Update the screen after updating year and month
+
+
+not_right:
     cmp al, 'q'
     jz  exit    ; If the key pressed was q, quit the program
 
@@ -265,25 +406,29 @@ main_loop:
 
     jmp main_loop
 
+update_screen:
+    call draw_dynamic_elements ; Redraw all dynamic elements on the screen
+    jmp main_loop              ; Loop
+
 exit:
     ; Cleanup Code: Set the terminal back to default settings
-    mov ax, 07h ; Change back to white text on black background
+    mov ax, 07h       ; Change back to white text on black background
     push ax
-    call clear_screen
-    add sp, 2h
+    call clear_screen ; Clear the screen to white text on black background
+    add sp, 2h        ; Drop the color passed on the stack
 
-    mov ah, 01h     ; Set text-mode cursor shape
-    mov cx, 0607h   ; Cursor from scanline 6 to 7 (basic underline)
-    int 10h         ; Bios interrupt
+    mov ah, 01h       ; Set text-mode cursor shape
+    mov cx, 0607h     ; Cursor from scanline 6 to 7 (basic underline)
+    int 10h           ; Bios interrupt
 
-    mov ah, 02h     ; Set cursor position
-    mov bh, 00h     ; Page number 0
-    mov dh, 00h     ; Row 0
-    mov dl, 00h     ; Col 0
-    int 10h         ; Bios interrupt
+    mov ah, 02h       ; Set cursor position
+    mov bh, 00h       ; Page number 0
+    mov dh, 00h       ; Row 0
+    mov dl, 00h       ; Col 0
+    int 10h           ; Bios interrupt
 
-    mov ah, 00h     ; Terminate program
-    int 21h         ; Software interrupt
+    mov ah, 00h       ; Terminate program
+    int 21h           ; Software interrupt
 
 ENDP main
 
