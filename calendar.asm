@@ -60,11 +60,11 @@ draw_char_at_dx_m MACRO char
     push bx        ; Push the character to the stack
 
     mov bx, [si+4] ; Restore bx to previous value
-    mov si, [si+4] ; Restore si to previous value
+    mov si, [si+6] ; Restore si to previous value
 
     call draw_row_col
 
-    add sp, 8      ; Drop the three values pushed to the stack: old si, old dx, coordinates, character
+    add sp, 8      ; Drop the four values pushed to the stack: old si, old dx, coordinates, character
 ENDM
 
 ; Destroys values in ax, bx, and cl
@@ -360,38 +360,78 @@ draw_static_elements PROC
     ret
 ENDP
 
+; Convenience variables to avoid loading these values multiple times
+curr_day_v db ?        ; The current day to draw
+month_start_day_v db ? ; The day of the week that the current month starts on
+curr_month_len_v db ?  ; The length of the current month
+
 draw_days PROC
-    pusha_m
+    pusha_m                     ; Push registers to the stack to restore later
 
+    mov [curr_day_v], 0         ; Zero curr_day_v
+
+    sub sp, 2                   ; Allocate space on the stack for the return value
+    call get_day_of_first       ; Get the day of the week that the first day of the month falls on
+    pop bx                      ; Pop the return value into bx
+    mov [month_start_day_v], bl ; Store the day of the week in the convenience variable
+
+    xor bh, bh                  ; Clear bh because bx is needed but only to store a byte length value
+    mov bl, [curr_mon_v]        ; Load the current month
+    mov bl, [month_lens_v+bx]   ; Load the current month's length (month_lens_v[curr_month_v])
+    mov [curr_month_len_v], bl  ; Store the month length in the convenience variable
+
+    mov cx, 42                  ; Loop 42 times for the day grid (6 rows of 7 days a week)
+    mov dh, 5                   ; Start at row 5
+    mov dl, 27                  ; Start at column 27
+days_loop:
+    cmp dl, 55                  ; Check if the column is past the end of the row
+    jne no_adjust               ; If a newline isn't required don't readjust the coordinates
+    add dh, 2                   ; Move down by 2 rows
+    mov dl, 27                  ; Reset the column to the beginning of the row
+
+no_adjust:
+    cmp [curr_day_v], 0         ; Check if the current day is 0
+    jne day_is_num              ; If it's greater than 0 then print a numerical day
+    mov bx, 42                  ; Move the maximum number of days into bx
+    sub bx, cx                  ; Subtract the current loop count to find the index of the day being drawn
+    cmp bl, [month_start_day_v] ; Compare the current day index to the starting day of the week for the month
+    jne no_start_yet            ; If the current day index isn't equal to the starting day of the week don't start printing numbers
+    mov [curr_day_v], 1         ; If this is the day of the week that the month starts on set the current day to 1
+    jmp day_is_num              ; Go print the numerical day
+
+no_start_yet:
+    draw_char_at_dx_m '_'       ; Draw the first half of a non-numerical day
+    inc dl                      ; Skip the format byte in vram
+    draw_char_at_dx_m '_'       ; Draw the second half of a non-numerical day
+    add dl, 3                   ; Skip the format byte and spacing betwen days
+    jmp done_printing           ; Skip drawing a numerical day
+
+day_is_num:
+    push dx                     ; Push the current coordinates onto the stack
+    xor bh, bh                  ; Clear bh because bx is needed but only to store a byte length value
+    mov bl, [curr_day_v]        ; Load the current day into bl
+    push bx                     ; Push the current day onto the stack
+    call print_day              ; Print the current numerical day
+    add sp, 4                   ; Drop the two paremeters passed on the stack
+    add dl, 4                   ; Move the coordinates onto the location of the next day to draw
+    inc [curr_day_v]            ; Move the current day onto the next
     
+    mov bl, [curr_month_len_v]  ; Load the length of the current month into bl
+    inc bl                      ; Add 1 to find 1 past the length of the current month
+    cmp bl, [curr_day_v]        ; Compare the next day to print (current day after incrementing post printing) to the length of the month + 1
+    jne done_printing           ; If the next day to print isn't off the end of the month, just finish printing
+    mov [curr_day_v], 0         ; If the next day to print would be after the end of the month set curr_day_v to 0 so that the rest of the days to print will be non numerical
+                                ; NOTE: Setting curr_day_v to 0 here will never start printing numerical days again because when checking for the first day of the week equality is checked not greater to or equal
 
-    popa_m
+done_printing:
+    loop days_loop              ; Loop over the days to print
+
+    popa_m                      ; Restore registers to previous values
     ret
 ENDP
 
 draw_dynamic_elements PROC
     pusha_m        ; Store all registers to restore later
-
-    ; Draw the days
-    ; TODO(Adin): Document
-    mov dh, 5
-    mov dl, 27
-    mov cx, 42
-days_loop:
-    cmp dl, 55
-    jne no_adjust
-    add dh, 2
-    mov dl, 27
-no_adjust:
-    push ax
-    draw_char_at_dx_m '_'
-    pop ax
-    add dl, 1
-    push ax
-    draw_char_at_dx_m '_'
-    pop ax
-    add dl, 3
-    loop days_loop
 
     ; Clear the on-screen month
     mov di, 176h         ; Load the absolute offset of the month label in vram
@@ -425,16 +465,9 @@ clear_mon_loop:
     call print_year                  ; Print the current year on screen
     add sp, 4                        ; Drop the 2 variables passed on the stack
 
-    ; Draw the starting day of the week for the current mont in the top left corner
-    sub sp, 2
-    call get_day_of_first
-    pop cx
-    xor dx, dx
-    push dx
-    push cx
-    call print_day
-    add sp, 4
-    
+    ; Draw the days of the month
+    call draw_days
+
     popa_m         ; Restore all registers to previous values
     ret
 ENDP
