@@ -100,6 +100,7 @@ month_name_ptrs_v dw offset jan_name_v, offset feb_name_v, offset mar_name_v, of
 
 ; Number of days in each month
 month_lens_v db 31,28,31,30,31,30,31,31,30,31,30,31
+month_keys_v db 1,4,4,0,2,5,0,3,6,1,4,6
 
 ; Current Month
 curr_mon_v db ?
@@ -184,6 +185,7 @@ print_year PROC
     pusha_m                     ; Store registers to restore later
 
     mov si, sp                  ; Move sp to si so it can be used as an offset
+
     mov dx, [si+ALL_REGS_OFF+4] ; Load the coordinates into dx
     calculate_vram_offset_m     ; Calculate the absolute vram offset specified by the coordinates
     mov di, bx                  ; Move the vram offset to di
@@ -219,6 +221,81 @@ print_year PROC
     popa_m                      ; Restore registers to previous values
     ret
 ENDP print_year
+
+print_day PROC
+    pusha_m                     ; Store registers on the stack to restore later
+
+    mov si, sp                  ; Load sp into si so it can be used as an offset
+
+    mov dx, [si+ALL_REGS_OFF+4] ; Load the starting coordinates into dx
+    calculate_vram_offset_m     ; Calculate the absolute vram offset of the starting coordinates
+    mov di, bx                  ; Move the vram offset into di
+
+    mov ax, [si+ALL_REGS_OFF+2] ; Load the day into ax
+    mov bl, 10                  ; Load 10 into bl to prepare for the upcoming division
+    xor ah, ah                  ; Clear ah to prepare for the division (ax/bl)
+    div bl                      ; Divide by 10 to split into ones (ah->remainder) and tens (al->quotient) places
+
+    add al, 30h                 ; Add 30h to the tens place to get the ascii representation
+    add ah, 30h                 ; Add 30h to the ones place to get the ascii representation
+    stosb                       ; Move the ascii tens place to vram
+    inc di                      ; Increment di to skip the format byte in vram
+
+    mov al, ah                  ; Move the ascii ones place to al
+    stosb                       ; Move the ascii ones place to vram
+
+    popa_m                      ; Restore registers to previous values
+    ret
+ENDP
+
+; Algorithm from https://cs.uwaterloo.ca/~alopez-o/math-faq/node73.html
+get_day_of_first PROC
+    pusha_m                     ; Store registers on the stack to restore later
+
+    mov ax, [curr_yer_v]        ; Load the current year into ax
+    mov bl, 100                 ; Move 100 into bl
+    div bl                      ; Divide the year by 100 to find first two (al->quotient) and last two (ah->remainder) digits of the year
+    mov dx, ax                  ; Save the split year in dx for later
+    mov al, ah                  ; Move the last two digits of the year into al
+    xor ah, ah                  ; Clear ah so ax just contains the last two digits of the year
+    shr ax, 2                   ; "Divide the year by for, discarding any fraction"
+    add ax, 1                   ; "Add the day of the month" (always looking for the first of the month so always add 1)
+
+    xor bx, bx                  ; Clear bx to prepare to hold the current month (only one byte)
+    mov bl, [curr_mon_v]        ; Load the current month into bl
+    xor cx, cx                  ; Clear cx to prepare to hold the current month's key
+    mov cl, [month_keys_v+bx]   ; Load the current month's key into cl 
+    add ax, cx                  ; "Add the month's key value"
+
+    mov bx, [curr_yer_v]        ; Load the current year into bx
+    and bx, 0FFFCh              ; Calculate current year % 4 (2 least signifigant bits)
+    jnz no_jan_feb_sub          ; If the remainder isn't 0 (not a leap year) don't check the month
+    mov bl, [curr_mon_v]        ; Load the current month into bl
+    cmp bl, 2                   ; Compare bl to 2
+    jge no_jan_feb_sub          ; If the current month is greater than or equal to 2 don't add 1 (not January or Febuary)
+    sub al, 1                   ; "Subtract 1 for January or Febuary of a leap year"
+
+no_jan_feb_sub:
+    cmp dh, 19                  ; Compare dh to 19
+    je no_2k_add                ; If the first two digits of the year aren't 19 don't add 6
+    add ax, 6                   ; "For a Gregorian date, add 0 for 1900's, 6 for 2000's"
+
+no_2k_add:
+    mov dl, dh                  ; Move the last two digits of the year into dl
+    xor dh, dh                  ; Clear dh so dx just contains the last two digits of the year
+    add ax, dx                  ; "Add the last two digits of the year"
+    
+    mov bx, 7                   ; Load 7 into bx
+    xor dx, dx                  ; Clear dx to prepare for the division (dx:ax / bx)
+    sub ax, 1                   ; Adjust from 1=Sunday, 0=Saturday to 0=Sunday, 6=Saturday
+    div bx                      ; "Divide by 7 and take the remainder"
+
+    mov si, sp                  ; Move sp into si so it can be used as an offset
+    mov [si+ALL_REGS_OFF+2], dx ; Store the return value on the stack so it can be retrieved by the calling function
+
+    popa_m                      ; Restore registers to previous values
+    ret
+ENDP
 
 draw_border PROC
     xor di, di              ; 0 vram index
@@ -283,6 +360,15 @@ draw_static_elements PROC
     ret
 ENDP
 
+draw_days PROC
+    pusha_m
+
+    
+
+    popa_m
+    ret
+ENDP
+
 draw_dynamic_elements PROC
     pusha_m        ; Store all registers to restore later
 
@@ -338,6 +424,16 @@ clear_mon_loop:
     push dx                          ; Push the current year to the stack
     call print_year                  ; Print the current year on screen
     add sp, 4                        ; Drop the 2 variables passed on the stack
+
+    ; Draw the starting day of the week for the current mont in the top left corner
+    sub sp, 2
+    call get_day_of_first
+    pop cx
+    xor dx, dx
+    push dx
+    push cx
+    call print_day
+    add sp, 4
     
     popa_m         ; Restore all registers to previous values
     ret
@@ -367,8 +463,8 @@ main PROC
     call draw_dynamic_elements ; Draw the initial month to the screen
 
 main_loop:
-    mov ah, 00h ; Get keycode
-    int 16h     ; Bios interrupt
+    mov ah, 00h            ; Get keycode
+    int 16h                ; Bios interrupt
 
     ; 4b left
     cmp ah, 4Bh            ; Check if the current key code is a left arrow press
