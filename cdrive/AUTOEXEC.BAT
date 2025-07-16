@@ -1,1 +1,1 @@
-PATH=c:\bin
+SET PATH=C:\BIN;Z:\
